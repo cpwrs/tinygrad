@@ -36,7 +36,7 @@ class UOp:
   src: Tuple[UOp, ...] = tuple()
   arg: Any = None
   def commutative(self) -> bool:
-    return self.op is UOps.ALU and self.arg in {BinaryOps.ADD, BinaryOps.MUL, BinaryOps.MAX, BinaryOps.CMPNE, BinaryOps.XOR}
+    return self.op is UOps.DEFINE_ACC or (UOps.ALU and self.arg in {BinaryOps.ADD, BinaryOps.MUL, BinaryOps.MAX, BinaryOps.CMPNE, BinaryOps.XOR})
   @functools.cached_property
   def cmp_tuple(self):
     # NOTE: this sort of DEFINE_VAR shouldn't have to be here. only for PTX
