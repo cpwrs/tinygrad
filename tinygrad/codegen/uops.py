@@ -214,10 +214,9 @@ constant_folder = PatternMatcher([
   (UOp.alu(TernaryOps.WHERE, UOp.alu(BinaryOps.CMPLT, UOp.alu(BinaryOps.ADD, UOp.var("idx"), UOp.alu(BinaryOps.MUL,
     UOp.cvar("mval"), UOp(UOps.RANGE, src=(UOp.var("loop_start"), UOp.var("loop_end"))).name("rng"))),
     UOp.cvar("compval")), UOp.cvar("multconst"), UOp.const(None,0)), loop_collapse),
-
-  (UOp.alu(TernaryOps.WHERE, UOp.alu(BinaryOps.CMPLT, UOp.alu(BinaryOps.ADD, UOp.var("idx"), UOp.alu(BinaryOps.MUL,
+  (UOp.alu(TernaryOps.WHERE, UOp(UOps.ALU, src=(UOp.alu(BinaryOps.ADD, UOp.var("idx"), UOp.alu(BinaryOps.MUL,
     UOp.cvar("mval"), UOp(UOps.RANGE, src=(UOp.var("loop_start"), UOp.var("loop_end"))).name("rng"))),
-    UOp.cvar("compval")), UOp.cvar("multconst"), UOp.const(None, 0)),
+    UOp.cvar("compval")), arg=BinaryOps.CMPLT), UOp.cvar("multconst"), UOp.const(None, 0)),
     lambda **kwargs: loop_collapse(mval=UOp.const(dtypes.int, -1), **kwargs)),
   # sum collapse to mul (with possible GEP)
   (UPat(UOps.PHI, src=(UPat(UOps.DEFINE_ACC, name="phi_input", src=[UPat(UOps.CONST), UPat(UOps.RANGE, name="loop")]),
