@@ -35,6 +35,7 @@ class UOp:
   dtype: Optional[DType] = None
   src: Tuple[UOp, ...] = tuple()
   arg: Any = None
+  permute: bool = False
   def commutative(self) -> bool:
     return self.op is UOps.DEFINE_ACC or (UOps.ALU and self.arg in {BinaryOps.ADD, BinaryOps.MUL, BinaryOps.MAX, BinaryOps.CMPNE, BinaryOps.XOR})
   @functools.cached_property
@@ -219,10 +220,10 @@ constant_folder = PatternMatcher([
     UOp.cvar("compval")), UOp.cvar("multconst"), UOp.const(None, 0)),
     lambda **kwargs: loop_collapse(mval=UOp.const(dtypes.int, -1), **kwargs)),
   # sum collapse to mul (with possible GEP)
-  (UPat(UOps.PHI, src=(UPat(UOps.DEFINE_ACC, name="phi_input", src=[UPat(UOps.CONST), UPat(UOps.RANGE, name="loop")]),
-                       UPat(UOps.ALU, BinaryOps.ADD, src=(UPat(name="val1"), UPat(name="val2"))))), sum_collapse),
-  (UPat(UOps.PHI, src=(UPat(UOps.GEP, name="phi_input", src=(UPat(UOps.DEFINE_ACC, src=[UPat(UOps.CONST), UPat(UOps.RANGE, name="loop")]),)),
-                       UPat(UOps.ALU, BinaryOps.ADD, src=(UPat(name="val1"), UPat(name="val2"))))), sum_collapse),
+  (UOp(UOps.PHI, src=(UOp(UOps.DEFINE_ACC, src=(UOp.cvar(), UOp(UOps.RANGE).name("loop"))).name("phi_input"),
+    UOp.alu(BinaryOps.ADD, UOp.var("val1"), UOp.var("val2")))), sum_collapse),
+  (UOp(UOps.PHI, src=(UOp(UOps.GEP, src=(UOp(UOps.DEFINE_ACC, src=(UOp.cvar(), UOp(UOps.RANGE).name("loop"))),)).name("phi_input"),
+    UOp.alu(BinaryOps.ADD, UOp.var("val1"), UOp.var("val2")))), sum_collapse),
   # deal with UNMUL
   (UPat(UOps.ALU, BinaryOps.MUL, [UPat(UOps.CONST, name="c1"), UPat(UOps.UNMUL, src=[UPat(UOps.CONST, name="c2"), UPat(name="v")])]),
    lambda c1,c2,v: v if c1.arg == c2.arg else None),
