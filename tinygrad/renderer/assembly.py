@@ -229,15 +229,16 @@ class PTXRenderer(Renderer):
 
 ptx_matcher = PatternMatcher([
   (UPat(UOps.ALU, BinaryOps.MUL, name="root", dtype=set([dt for dt in dtypes.fields().values() if dtypes.is_int(dt)]),
-      src=[UPat(UOps.CONST, set([2**i for i in range(64)]), name="const"), UPat(name="mul")]),
+      permute=True, src=(UPat(UOps.CONST, set([2**i for i in range(64)]), name="const"), UPat(name="mul"))),
     lambda root, mul, const: UOp(UOps.ALU, root.dtype, (mul, UOp.const(dtypes.int, int(math.log2(const.arg)))), BinaryOps.SHL)),
   (UPat(UOps.ALU, BinaryOps.IDIV, name="root", dtype=set([dt for dt in dtypes.fields().values() if dtypes.is_int(dt)]),
-      src=[UPat(UOps.CONST, set([2**i for i in range(64)]), name="const"), UPat(name="div")]),
+      permute=True, src=(UPat(UOps.CONST, set([2**i for i in range(64)]), name="const"), UPat(name="div"))),
     lambda root, div, const: UOp(UOps.ALU, root.dtype, (div, UOp.const(dtypes.int, int(math.log2(const.arg)))), BinaryOps.SHR)),
-  (UPat(UOps.ALU, BinaryOps.CMPNE, (UPat(dtype=dtypes.bool),UPat()), "root"), lambda root: UOp(root.op, root.dtype, root.src, BinaryOps.XOR)),
-  (UPat(UOps.ALU, BinaryOps.CMPLT, (UPat(name="x", dtype=dtypes.bool),UPat(name="y")), "root"),
+  (UPat(UOps.ALU, BinaryOps.CMPNE, src=(UPat(dtype=dtypes.bool),UPat()), name="root"),
+   lambda root: UOp(root.op, root.dtype, root.src, BinaryOps.XOR)),
+  (UPat(UOps.ALU, BinaryOps.CMPLT, src=(UPat(name="x", dtype=dtypes.bool),UPat(name="y")), name="root"),
     lambda root,x,y: UOp(root.op, root.dtype, (UOp(UOps.ALU, dtypes.bool, (x,), UnaryOps.NEG), y), BinaryOps.MUL)),
-  (UPat(UOps.ALU, BinaryOps.ADD, [UPat(name="non_muls"), UPat(UOps.ALU, BinaryOps.MUL, name="muls")], "root"),
+  (UPat(UOps.ALU, BinaryOps.ADD, permute=True, src=(UPat(name="non_muls"), UPat(UOps.ALU, BinaryOps.MUL, name="muls")), name="root"),
     lambda root, muls, non_muls: UOp(UOps.ALU, root.dtype, muls.src + (non_muls,), TernaryOps.MULACC)),
   *[(UPat(UOps.ALU, op, dtype=dtypes.half, name="x"),
     lambda x: (UOp(x.op, dtypes.float32, tuple([vv.cast(dtypes.float32) for vv in x.src]), x.arg).cast(dtypes.half)))
@@ -256,7 +257,7 @@ ptx_matcher = PatternMatcher([
     lambda root,g: UOp(root.op, root.dtype, root.src[:3] + (g.cast(dtypes.uint8),), root.arg)),
   # ptr_ar (load/store)
   (UPat({UOps.LOAD, UOps.STORE}, name="root", allow_len={2,3,4,5}, src=(UPat({UOps.DEFINE_LOCAL,UOps.DEFINE_GLOBAL}),
-                               UPat(UOps.ALU, BinaryOps.ADD, src=[UPat(name="alu"), UPat(UOps.CONST, name="const")]))),
+                               UPat(UOps.ALU, BinaryOps.ADD, permute=True, src=(UPat(name="alu"), UPat(UOps.CONST, name="const"))))),
     lambda root, alu, const: UOp(root.op, root.dtype,
       (alu.cast(dtypes.int64)*UOp.const(dtypes.int64, root.src[0].dtype.itemsize)+root.src[0].cast(dtypes.int64),
        UOp.const(const.dtype, root.src[0].dtype.itemsize)*const)+root.src[2:])),

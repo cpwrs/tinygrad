@@ -101,7 +101,7 @@ class TestPatternMatcher(TestUOps):
     self.assertEqual(matcher.rewrite(c5), None)
 
   def test_vin_permutations(self):
-    matcher = PatternMatcher([(UPat(UOps.ALU, name="x", src=[UPat(UOps.CONST), UPat(UOps.ALU)]), lambda x: x)])
+    matcher = PatternMatcher([(UPat(UOps.ALU, name="x", permute=True, src=(UPat(UOps.CONST), UPat(UOps.ALU))), lambda x: x)])
     c1 = UOp(UOps.CONST, dtypes.float, arg=1.0)
     c2 = UOp(UOps.CONST, dtypes.float, arg=2.0)
     c3 = UOp(UOps.ALU, dtypes.float, (c1,c2), BinaryOps.ADD)
@@ -139,7 +139,7 @@ class TestPatternMatcher(TestUOps):
     c2 = UOp(UOps.CONST, dtypes.float, arg=2.0)
     u1 = (c1 + c2) + c1
     u2 = (c2 + c1) + c1
-    pat = UPat(UOps.ALU, src = (UPat(UOps.ALU, src=[UPat(name='a'), UPat(name='b')]), UPat(name='b')))
+    pat = UPat(UOps.ALU, src=(UPat(UOps.ALU, src=(UPat(name='a'), UPat(name='b'))), UPat(name='b')))
     assert _match(u1, pat, {})
     assert _match(u2, pat, {})
 
