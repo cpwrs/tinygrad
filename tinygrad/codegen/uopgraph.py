@@ -36,7 +36,7 @@ class UPat:
   @staticmethod
   def compile(u: UOp, name:Optional[str]=None, permute:bool=False) -> UPat:
     if u.op is UOps.VAR: return UPat(name=name or u.arg, dtype=u.dtype) if len(u.src) == 0 else UPat.compile(u.src[0], name or u.arg)
-    if u.op is UOps.PERMUTE: return UPat.compile(u.src[0], name=name or u.arg, permute=True)
+    # if u.op is UOps.PERMUTE: return UPat.compile(u.src[0], name=name or u.arg, permute=True)
     return UPat(u.op, u.arg, (list if u.commutative() or permute else tuple)([UPat.compile(src) for src in u.src]) if u.src != () else None,
                 name, u.dtype, allow_any_len=(isinstance(name, str) and 'allow_any_len' in name))
 
@@ -344,12 +344,12 @@ constant_folder = PatternMatcher([
     UOp.cvar("compval")), UOp.cvar("multconst"), UOp.const(None, 0)),
     lambda **kwargs: loop_collapse(mval=UOp.const(dtypes.int, -1), **kwargs)),
   # sum collapse to mul (with possible GEP)
-  (UOp(UOps.PHI, src=(UOp(UOps.DEFINE_ACC, src=(UOp.cvar(), UOp(UOps.RANGE).name("loop"))).permute().name("phi_input"),
+  (UOp(UOps.PHI, src=(UOp(UOps.DEFINE_ACC, src=(UOp.cvar(), UOp(UOps.RANGE).name("loop"))).name("phi_input"),
     UOp.alu(BinaryOps.ADD, UOp.var("val1"), UOp.var("val2")))), sum_collapse),
-  (UOp(UOps.PHI, src=(UOp(UOps.GEP, src=(UOp(UOps.DEFINE_ACC, src=(UOp.cvar(), UOp(UOps.RANGE).name("loop"))).permute(),)).name("phi_input"),
+  (UOp(UOps.PHI, src=(UOp(UOps.GEP, src=(UOp(UOps.DEFINE_ACC, src=(UOp.cvar(), UOp(UOps.RANGE).name("loop"))),)).name("phi_input"),
     UOp.alu(BinaryOps.ADD, UOp.var("val1"), UOp.var("val2")))), sum_collapse),
   # deal with UNMUL
-  (UOp.alu(BinaryOps.MUL, UOp.cvar("c1"), UOp(UOps.UNMUL, src=(UOp.cvar("c2"), UOp.var("v"))).permute()),
+  (UOp.alu(BinaryOps.MUL, UOp.cvar("c1"), UOp(UOps.UNMUL, src=(UOp.cvar("c2"), UOp.var("v")))),
    lambda c1,c2,v: v if c1.arg == c2.arg else None),
   (UOp(UOps.UNMUL, src=(UOp.const(None, 0).name('zero'), UOp.var())), lambda zero: zero),
   (UOp(UOps.UNMUL).name('unmul').cast().name('root'), lambda root,unmul: UOp(UOps.UNMUL, root.dtype, (unmul.src[0].cast(root.dtype), unmul.src[1]))),
