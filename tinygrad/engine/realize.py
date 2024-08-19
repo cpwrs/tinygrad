@@ -14,7 +14,7 @@ from tinygrad.engine.schedule import ScheduleItem
 # **************** Program Creation ****************
 
 logkerns, logkerns_level = open(getenv("LOGKERNS", ""), "a") if getenv("LOGKERNS", "") else None, getenv("LOGKERNS_LEVEL", 1)
-def get_kernel(renderer:Renderer, ast:UOp) -> Kernel:
+def get_kernels(renderer:Renderer, ast:UOp) -> List[Kernel, ...]:
   if DEBUG >= 5:
     print(ast)
   k = Kernel(ast, opts=renderer).required_optimizations()
@@ -61,7 +61,7 @@ def get_kernel(renderer:Renderer, ast:UOp) -> Kernel:
                   raise RuntimeError(f"mismatch of {diff_count}/{b.numel()} items with type {b.dtype}, max {(b-bufs[0]).abs().max().item()}")
   if logkerns is not None: logkerns.writelines([f"{(k.ast, k.applied_opts)}\n"])
   if DEBUG >= 5: print((k.ast, k.applied_opts)) # print here to show final applied_opts for all kernels instead of just in beam_search
-  return k
+  return [k]
 
 # **************** Runners ****************
 
@@ -147,18 +147,20 @@ class BufferXfer(BufferCopy):
 # **************** method cache ****************
 
 method_cache: Dict[Tuple[str, bytes, int, int, bool], CompiledRunner] = {}
-def get_runner(dname:str, ast:UOp) -> CompiledRunner:
+def get_runners(dname:str, ast:UOp) -> List:
   ckey = (dname, ast.key, BEAM.value, NOOPT.value, False)
-  if cret:=method_cache.get(ckey): return cret
+  if cret:=method_cache.get(ckey): return (cret,)
   bkey = (dname.split(":")[0], ast.key, BEAM.value, NOOPT.value, True)
   if bret:=method_cache.get(bkey):
-    method_cache[ckey] = ret = CompiledRunner(replace(bret.p, dname=dname), bret.lib)
+    method_cache[ckey] = run = CompiledRunner(replace(bret.p, dname=dname), bret.lib)
+    return [run]
   else:
-    prg: Program = get_kernel(Device[dname].renderer, ast).to_program()
+    programs: List[Program] = [k.to_program for k in get_kernels(Device[dname].renderer, ast)]
+    runners: List = []
     if getenv("FUZZ_UOPS"):
       from test.external.fuzz_uops import UOpsFuzzerRunner
-      return UOpsFuzzerRunner(replace(prg, dname=dname))
-    method_cache[ckey] = method_cache[bkey] = ret = CompiledRunner(replace(prg, dname=dname))
+      runners.append(UOpsFuzzerRunner(replace(prg, dname=dname)))
+    method_cache[ckey] = method_cache[bkey] = run = CompiledRunner(replace(prg, dname=dname))
   return ret
 
 # **************** lowering functions ****************

@@ -19,7 +19,7 @@ from enum import Enum, auto
 
 class OptOps(Enum):
   TC = auto(); UPCAST = auto(); UPCASTMID = auto(); UNROLL = auto(); LOCAL = auto() # noqa: E702
-  GROUP = auto(); GROUPTOP = auto(); NOLOCALS = auto(); PADTO = auto(); SWAP = auto() # noqa: E702
+  SPLIT = auto(); GROUP = auto(); GROUPTOP = auto(); NOLOCALS = auto(); PADTO = auto(); SWAP = auto() # noqa: E702
   def __lt__(self, x:OptOps): return self.value < x.value
 
 class KernelOptError(Exception): pass
@@ -35,7 +35,7 @@ class Opt:
   def __repr__(self): return f"Opt(op={self.op}, axis={self.axis}, amt={self.amt})"
   def real_axis(self, k:Kernel):
     if self.axis is None: return -1
-    if self.op is OptOps.UNROLL: return k.first_reduce+self.axis
+    if self.op in {OptOps.UNROLL, OptOps.SPLIT} : return k.first_reduce+self.axis
     if self.op in {OptOps.GROUP, OptOps.GROUPTOP}: return k.first_reduce+k.group_for_reduces+self.axis
     return self.axis
 
@@ -95,6 +95,7 @@ class Kernel:
     # parameters for optimization
     self.applied_opts: List[Opt] = []
     self.group_for_reduces: int = 0
+    self.split_reduce: bool = False
     self.upcasted: int = 0
     self.local_dims: int = 0
     self.tensor_core: Optional[TensorCore] = None
@@ -120,12 +121,22 @@ class Kernel:
     ret.sts = self.sts[:len(ret.bufs)+len(ret.reduceops)*2] # NOTE: must redo the local buffers with TC in beam
 
     # parameters for optimizations
-    ret.applied_opts, ret.group_for_reduces, ret.upcasted, ret.local_dims, ret.dont_use_locals = \
-      self.applied_opts[:], self.group_for_reduces, self.upcasted, self.local_dims, self.dont_use_locals
+    ret.applied_opts, ret.group_for_reduces, ret.split_reduce, ret.upcasted, ret.local_dims, ret.dont_use_locals = \
+      self.applied_opts[:], self.group_for_reduces, self.split_reduce, self.upcasted, self.local_dims, self.dont_use_locals
     ret.tensor_core, ret.tensor_core_opts, ret.bufs_for_tensor_core, ret.use_tensor_cores = \
       self.tensor_core, self.tensor_core_opts, self.bufs_for_tensor_core, self.use_tensor_cores
 
     return ret
+
+  def split(self) -> Tuple[Kernel, ...]:
+    ast = self.get_optimized_ast()
+    parent, op, trees = ast, ast.src[0], [ast]
+    while(op.src):
+      if op.op is UOps.SINK:
+        parent.src = ()
+        trees.append(op)
+      parent, op = op, op.src[0]
+    return tuple(Kernel(a, opts=self.opts) for a in trees)
 
   @property
   def membufs(self) -> List[UOp]: return list({x.src[0].key:x.src[0] for x in self.bufs if x.op in {UOps.LOAD, UOps.STORE}}.values())
@@ -425,6 +436,12 @@ class Kernel:
       check(len(self.reduceops) == 1, "can't group with multiple reduces")
       self.shift_to(axis, amt, top=(opt.op is OptOps.GROUPTOP), insert_before=self.first_reduce + self.group_for_reduces)
       self.group_for_reduces += 1
+    elif opt.op is OptOps.SPLIT:
+      check(self.full_shape[axis] % amt == 0 and self.sts[self.full_buf_index].real_strides()[axis] != 0, "bad split candidate")
+      check(not self.vars, "can't split with symbolic shape")
+      check(self.first_reduce <= axis < self.shape_len-self.upcasted and len(self.reduceops) == 1, "must be the only reduce axis to split")
+      self.shift_to(axis, amt, top=True, insert_before=self.first_reduce)
+      self.split_reduce = True
     elif opt.op is OptOps.UNROLL:                     # purple
       check(axis < self.first_upcast, "can't upcasted already upcasted")
       check(amt <= 32, "don't unroll more than 32")
@@ -634,10 +651,12 @@ class Kernel:
     # transformed to the final UOp
     @functools.lru_cache(None)
     def fixup_ast(op:UOp, apply_to_st=None) -> UOp:
-      arg = op.arg
       if op.op in BUFFER_UOPS:
         # for locals, we use the ShapeTracker that's in the srcs
         st = op.st_arg if op.src[0].op is UOps.DEFINE_LOCAL else self.sts[self.bufs.index(op)]
+        # fix store of a splitted reduce (globals changed)
+        if split_reduce and self.reduceop in ops.src:
+          st = ShapeTracker.from_shape((self.full_shape[0],) + (1,)*(self.shape_len-1))
         st_uop = (st if apply_to_st is None else apply_to_st(st)).to_uop()
         if op.op is UOps.CONST: return replace(op, src=(st_uop,))
         if op.op is UOps.STORE: return replace(op, src=(op.src[0], st_uop, fixup_ast(op.src[2], apply_to_st)))
@@ -719,6 +738,13 @@ class Kernel:
           local_load = UOp(UOps.LOAD, op.dtype, (local_buffer, st_uop, UOp.store(local_buffer, st_uop, start)))
           second_axis = tuple(range(self.first_reduce, self.first_reduce+self.group_for_reduces))
           return UOp(UOps.REDUCE_AXIS, op.dtype, (local_load,), arg=(op.arg[0], second_axis))
+        if self.reduce_split:
+          buf_shapes = (self.full_shape, (1,), (self.full_shape[0],))
+          load1, store2, load2 = tuple((UOp(UOps.DEFINE_GLOBAL, PtrDtype(cast(DType, op.dtype), arg=(not i%2))),
+                                        ShapeTracker.from_shape(s).to_uop()) for i,s in enumerate(buf_shapes))
+          reduce2 = UOp(UOps.REDUCE_AXIS, op.dtype, (UOp.load((load2,)),), (op.arg[0], (0,)))
+          kernel2 = UOp(UOps.SINK, (UOp.store((*store2, reduce2))))
+          return UOp(UOps.REDUCE_AXIS, op.dtype, (UOp.load((kernel2, *load1), op.dtype),), (op.arg[0], (self.shape_len,)))
         arg = (reduceop, axis)
       elif op.op is UOps.SINK:
         arg = KernelInfo(self.local_dims, self.upcasted, self.dont_use_locals)
